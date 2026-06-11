@@ -160,7 +160,7 @@ bool Steam_Inventory::GetResultItems( SteamInventoryResult_t resultHandle,
             // We end if we reached the end of items or the end of buffer
             for( auto i = user_items.begin(); i != user_items.end() && max_items; ++i, --max_items )
             {
-                pOutItemsArray->m_itemId = std::stoi(i.key());
+                pOutItemsArray->m_itemId = std::stoull(i.key());
                 try {
                     pOutItemsArray->m_iDefinition = i->value("definition", static_cast<int32>(pOutItemsArray->m_itemId));
                     pOutItemsArray->m_unQuantity = i->value("quantity", static_cast<uint16>(1));
@@ -240,8 +240,7 @@ bool Steam_Inventory::GetResultItemProperty( SteamInventoryResult_t resultHandle
         uint32 idx = 0;
         for (auto i = user_items.begin(); i != user_items.end(); ++i, ++idx) {
             if (idx == unItemIndex) {
-                try { definition = i->value("definition", std::stoi(i.key())); }
-                catch (...) { try { definition = std::stoi(i.key()); } catch (...) { definition = 0; } }
+                definition = i->value("definition", 0);
                 found = true;
                 break;
             }
@@ -579,6 +578,9 @@ bool Steam_Inventory::ExchangeItems( SteamInventoryResult_t *pResultHandle,
 
     // PATCH: implement the exchange so "unpack" items (e.g., opening a chest) work:
     // consume the input items and generate the output items.
+    PRINT_DEBUG("ExchangeItems: generate=%u destroy=%u", unArrayGenerateLength, unArrayDestroyLength);
+    if (unArrayGenerateLength && pArrayGenerate) PRINT_DEBUG("  generate[0] def=%d", (int)pArrayGenerate[0]);
+    if (unArrayDestroyLength && pArrayDestroy) PRINT_DEBUG("  destroy[0] uid=%llu", (unsigned long long)pArrayDestroy[0]);
 
     // Consume the input items (e.g., the chest being opened).
     if (pArrayDestroy) {
@@ -601,7 +603,7 @@ bool Steam_Inventory::ExchangeItems( SteamInventoryResult_t *pResultHandle,
     }
 
     // Generate the output items (e.g., the loot from the chest).
-    static unsigned long long exchange_next_id = 7000000000ULL;
+    static unsigned long long exchange_next_id = 1000000000ULL;  // int32-safe range
     std::vector<SteamItemInstanceID_t> generated;
     if (pArrayGenerate) {
         for (uint32 i = 0; i < unArrayGenerateLength; ++i) {

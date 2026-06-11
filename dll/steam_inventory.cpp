@@ -574,9 +574,51 @@ bool Steam_Inventory::ExchangeItems( SteamInventoryResult_t *pResultHandle,
                             STEAM_ARRAY_COUNT(unArrayGenerateLength) const SteamItemDef_t *pArrayGenerate, STEAM_ARRAY_COUNT(unArrayGenerateLength) const uint32 *punArrayGenerateQuantity, uint32 unArrayGenerateLength,
                             STEAM_ARRAY_COUNT(unArrayDestroyLength) const SteamItemInstanceID_t *pArrayDestroy, STEAM_ARRAY_COUNT(unArrayDestroyLength) const uint32 *punArrayDestroyQuantity, uint32 unArrayDestroyLength )
 {
-    PRINT_DEBUG_TODO();
+    PRINT_DEBUG_ENTRY();
     std::lock_guard<std::recursive_mutex> lock(global_mutex);
-    return false;
+
+    // PATCH: implement the exchange so "unpack" items (e.g., opening a chest) work:
+    // consume the input items and generate the output items.
+
+    // Consume the input items (e.g., the chest being opened).
+    if (pArrayDestroy) {
+        for (uint32 i = 0; i < unArrayDestroyLength; ++i) {
+            auto it = user_items.find(std::to_string(pArrayDestroy[i]));
+            if (it == user_items.end()) continue;
+            uint32 q = punArrayDestroyQuantity ? punArrayDestroyQuantity[i] : 1;
+            try {
+                int cur = it->is_object() ? it->value("quantity", 1) : it->get<int>();
+                int res = cur - static_cast<int>(q);
+                if (res <= 0) {
+                    user_items.erase(it);
+                } else if (it->is_object()) {
+                    (*it)["quantity"] = res;
+                } else {
+                    *it = res;
+                }
+            } catch (...) {}
+        }
+    }
+
+    // Generate the output items (e.g., the loot from the chest).
+    static unsigned long long exchange_next_id = 7000000000ULL;
+    std::vector<SteamItemInstanceID_t> generated;
+    if (pArrayGenerate) {
+        for (uint32 i = 0; i < unArrayGenerateLength; ++i) {
+            SteamItemInstanceID_t iid = static_cast<SteamItemInstanceID_t>(++exchange_next_id);
+            nlohmann::json item;
+            item["definition"] = static_cast<int32>(pArrayGenerate[i]);
+            item["quantity"] = static_cast<int>(punArrayGenerateQuantity ? punArrayGenerateQuantity[i] : 1);
+            user_items[std::to_string(iid)] = item;
+            generated.push_back(iid);
+        }
+    }
+
+    // Return a result containing the generated items (the game reads the loot from it).
+    struct Steam_Inventory_Requests* request = new_inventory_result(false, generated.data(), static_cast<uint32>(generated.size()));
+    if (pResultHandle != nullptr)
+        *pResultHandle = request->inventory_result;
+    return true;
 }
 
 

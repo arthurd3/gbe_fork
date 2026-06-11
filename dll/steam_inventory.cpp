@@ -536,12 +536,17 @@ bool Steam_Inventory::ConsumeItem( SteamInventoryResult_t *pResultHandle, SteamI
     if (it != user_items.end()) {
         try
         {
-            uint32 current = it->get<int>();
-            PRINT_DEBUG("previous %u", current);
-            if (current < unQuantity) unQuantity = current;
-            uint32 result = current - unQuantity;
-            if (result == 0) {
+            // PATCH: user_items values are JSON OBJECTS {definition,quantity}; the original
+            // it->get<int>() threw on objects (silently caught) so the item was never
+            // consumed. Read the quantity from the object (or the bare int) and decrement.
+            int current = it->is_object() ? it->value("quantity", 1) : it->get<int>();
+            PRINT_DEBUG("previous %d", current);
+            if (current < static_cast<int>(unQuantity)) unQuantity = static_cast<uint32>(current);
+            int result = current - static_cast<int>(unQuantity);
+            if (result <= 0) {
                 user_items.erase(it);
+            } else if (it->is_object()) {
+                (*it)["quantity"] = result;
             } else {
                 *it = result;
             }
@@ -607,9 +612,22 @@ bool Steam_Inventory::ExchangeItems( SteamInventoryResult_t *pResultHandle,
     std::vector<SteamItemInstanceID_t> generated;
     if (pArrayGenerate) {
         for (uint32 i = 0; i < unArrayGenerateLength; ++i) {
+            int32 def = static_cast<int32>(pArrayGenerate[i]);
+            // PATCH (cube/craft): recipe outputs arrive as SYNTHETIC defs of the form
+            // real_def * 1000 + suffix (e.g. 930851103 = STAGEBOX 930851, suffix 103).
+            // The real Steam server resolves these to the real item; echoing the synthetic
+            // def makes the game reject the result (it's not a known item). Resolve to the
+            // real def when the synthetic isn't a known item but def/1000 is.
+            if (defined_items.find(std::to_string(def)) == defined_items.end()) {
+                int32 base = def / 1000;
+                if (defined_items.find(std::to_string(base)) != defined_items.end()) {
+                    PRINT_DEBUG("  resolved synthetic def %d -> %d", def, base);
+                    def = base;
+                }
+            }
             SteamItemInstanceID_t iid = static_cast<SteamItemInstanceID_t>(++exchange_next_id);
             nlohmann::json item;
-            item["definition"] = static_cast<int32>(pArrayGenerate[i]);
+            item["definition"] = def;
             item["quantity"] = static_cast<int>(punArrayGenerateQuantity ? punArrayGenerateQuantity[i] : 1);
             user_items[std::to_string(iid)] = item;
             generated.push_back(iid);

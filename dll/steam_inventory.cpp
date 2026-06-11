@@ -224,10 +224,72 @@ bool Steam_Inventory::GetResultItemProperty( SteamInventoryResult_t resultHandle
                                     const char *pchPropertyName,
                                     STEAM_OUT_STRING_COUNT( punValueBufferSizeOut ) char *pchValueBuffer, uint32 *punValueBufferSizeOut )
 {
-    PRINT_DEBUG_TODO();
+    PRINT_DEBUG_ENTRY();
     std::lock_guard<std::recursive_mutex> lock(global_mutex);
-    //TODO
-    return false;
+
+    struct Steam_Inventory_Requests *request = get_inventory_result(resultHandle);
+    if (!request) return false;
+    if (!request->result_done()) return false;
+    if (!inventory_loaded) return false;
+    if (!punValueBufferSizeOut) return false;
+
+    // Find the item at unItemIndex and grab its 'definition'
+    int32 definition = 0;
+    bool found = false;
+    if (request->full_query) {
+        uint32 idx = 0;
+        for (auto i = user_items.begin(); i != user_items.end(); ++i, ++idx) {
+            if (idx == unItemIndex) {
+                try { definition = i->value("definition", std::stoi(i.key())); }
+                catch (...) { try { definition = std::stoi(i.key()); } catch (...) { definition = 0; } }
+                found = true;
+                break;
+            }
+        }
+    } else {
+        if (unItemIndex < request->instance_ids.size()) {
+            auto it = user_items.find(std::to_string(request->instance_ids[unItemIndex]));
+            if (it != user_items.end()) {
+                try { definition = it->value("definition", 0); } catch (...) { definition = 0; }
+                found = true;
+            }
+        }
+    }
+    if (!found) return false;
+
+    // Look up the item definition's properties from defined_items (items.json)
+    std::string value;
+    auto def_it = defined_items.find(std::to_string(definition));
+    if (def_it != defined_items.end() && def_it->is_object()) {
+        if (pchPropertyName == nullptr || pchPropertyName[0] == '\0') {
+            // NULL/empty name -> comma-separated list of available property names
+            for (auto it = def_it->begin(); it != def_it->end(); ++it) {
+                if (!value.empty()) value += ",";
+                value += it.key();
+            }
+        } else {
+            auto prop = def_it->find(pchPropertyName);
+            if (prop == def_it->end()) return false;
+            if (prop->is_string()) value = prop->get<std::string>();
+            else value = prop->dump();
+        }
+    } else if (!(pchPropertyName == nullptr || pchPropertyName[0] == '\0')) {
+        return false;
+    }
+
+    uint32 needed = static_cast<uint32>(value.size()) + 1;
+    if (pchValueBuffer != nullptr) {
+        uint32 cap = *punValueBufferSizeOut;
+        uint32 copy = (needed <= cap) ? needed : cap;
+        if (copy > 0) {
+            memcpy(pchValueBuffer, value.c_str(), copy - 1);
+            pchValueBuffer[copy - 1] = '\0';
+        }
+        *punValueBufferSizeOut = copy;
+    } else {
+        *punValueBufferSizeOut = needed;
+    }
+    return true;
 }
 
 
@@ -423,7 +485,8 @@ bool Steam_Inventory::GrantPromoItems( SteamInventoryResult_t *pResultHandle )
 {
     PRINT_DEBUG_ENTRY();
     std::lock_guard<std::recursive_mutex> lock(global_mutex);
-    struct Steam_Inventory_Requests* request = new_inventory_result(false);
+    // PATCH: return the configured inventory (default_items.json)
+    struct Steam_Inventory_Requests* request = new_inventory_result(true);
 
     if (pResultHandle != nullptr)
         *pResultHandle = request->inventory_result;
@@ -438,9 +501,10 @@ bool Steam_Inventory::GrantPromoItems( SteamInventoryResult_t *pResultHandle )
 bool Steam_Inventory::AddPromoItem( SteamInventoryResult_t *pResultHandle, SteamItemDef_t itemDef )
 {
     PRINT_DEBUG_ENTRY();
-    //TODO
     std::lock_guard<std::recursive_mutex> lock(global_mutex);
-    struct Steam_Inventory_Requests* request = new_inventory_result(false);
+    // PATCH: return the configured inventory (default_items.json) so games that
+    // claim promo items via AddPromoItem(0) actually receive their items.
+    struct Steam_Inventory_Requests* request = new_inventory_result(true);
 
     if (pResultHandle != nullptr)
         *pResultHandle = request->inventory_result;
@@ -450,9 +514,9 @@ bool Steam_Inventory::AddPromoItem( SteamInventoryResult_t *pResultHandle, Steam
 bool Steam_Inventory::AddPromoItems( SteamInventoryResult_t *pResultHandle, STEAM_ARRAY_COUNT(unArrayLength) const SteamItemDef_t *pArrayItemDefs, uint32 unArrayLength )
 {
     PRINT_DEBUG_ENTRY();
-    //TODO
     std::lock_guard<std::recursive_mutex> lock(global_mutex);
-    struct Steam_Inventory_Requests* request = new_inventory_result(false);
+    // PATCH: return the configured inventory (default_items.json)
+    struct Steam_Inventory_Requests* request = new_inventory_result(true);
 
     if (pResultHandle != nullptr)
         *pResultHandle = request->inventory_result;
